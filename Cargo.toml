@@ -1,0 +1,28 @@
+[package]
+name = "cord-client"
+version = "0.1.0"
+edition = "2018"
+authors = ["Cord Contributors"]
+license = "MPL-2.0"
+description = """
+The client-side user interfaces for the Cord Platform that publish and subscribe messages
+to the Broker.
+"""
+homepage = "http://cord-proj.org"
+repository = "https://github.com/cord-proj/cord-client"
+readme = "README.md"
+keywords = ["cord", "stream"]
+categories = ["network-programming", "data-structures"]
+include = ["src/**/*"]
+
+[dependencies]
+clap = "2.33"
+cord-message = "0.1"
+env_logger = "0.6"
+error-chain = "0.12"
+futures = "0.1"
+futures-locks = "0.3"
+log = "0.4"
+retain_mut = "0.1"
+termcolor = "1.1"
+tokio = "0.1"
