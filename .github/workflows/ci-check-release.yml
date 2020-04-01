@@ -1,0 +1,49 @@
+name: CI Check Release
+
+on:
+  pull_request:
+    branches:
+      - releases
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  changelog:
+    name: Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Get crate version
+        id: version
+        run: echo ::set-output name=value::$(sed -ne 's/version = "\(.*\)"/\1/p' < Cargo.toml)
+
+      - name: Check changelog
+        run: python ci/changelog.py ${{ steps.version.outputs.value }}
+
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merge
+        uses: actions/checkout@v2
+
+      - name: Checkout base
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: head
+
+      - name: Get crate version
+        id: version
+        run: echo ::set-output name=value::$(sed -ne 's/version = "\(.*\)"/\1/p' < Cargo.toml)
+
+      - name: Get old crate version
+        id: old_version
+        run: echo ::set-output name=value::$(sed -ne 's/version = "\(.*\)"/\1/p' < head/Cargo.toml)
+
+      - name: Verify that version has been changed
+        run: \[ "${{ steps.version.outputs.value }}" != "${{ steps.old_version.outputs.value }}" \]

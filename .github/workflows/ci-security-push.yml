@@ -1,0 +1,25 @@
+name: CI Security Audit on Push
+
+on:
+  push:
+    paths:
+      - 'Cargo.toml'
+    branches:
+      - master
+
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Audit crates
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

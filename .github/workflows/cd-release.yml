@@ -1,0 +1,36 @@
+name: CD Release
+
+on:
+  push:
+    branches:
+      - releases
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Get crate version
+        id: version
+        run: echo ::set-output name=value::$(sed -ne 's/version = "\(.*\)"/\1/p' < Cargo.toml)
+
+      - name: Get CHANGELOG entry
+        id: changelog
+        run: |
+          body=$(python ci/changelog.py ${{ steps.version.outputs.value }})
+          body="${body//$'\n'/'%0A'}"
+          echo ::set-output name=body::$body
+
+      - name: Create release
+        uses: actions/create-release@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          release_name: Release v${{ steps.version.outputs.value }}
+          body: ${{ steps.changelog.outputs.body }}
+          draft: false
+          prerelease: false

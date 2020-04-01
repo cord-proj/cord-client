@@ -1,0 +1,44 @@
+name: CD Publish
+
+on:
+  release:
+    types:
+      - created
+
+jobs:
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          ref: releases
+
+      - name: Publish Docker image
+        uses: elgohr/Publish-Docker-Github-Action@master
+        with:
+          name: cord-client
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+          tag_semver: true
+
+  crates:
+    name: Crates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          ref: releases
+
+      - name: Login to Crates.io
+        uses: actions-rs/cargo@v1
+        with:
+          command: login
+          args: ${{ secrets.CRATES_TOKEN }}
+
+      - name: Cargo publish
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
