@@ -2,7 +2,7 @@ pub mod errors;
 
 use cord_message::{Codec, Message, Pattern};
 use errors::{Error, ErrorKind, Result};
-use futures::{Future, Stream};
+use futures::{Future, Sink, StartSend, Stream};
 use futures_locks::Mutex;
 use retain_mut::RetainMut;
 use tokio::{codec::Framed, net::TcpStream, prelude::Async, sync::mpsc, sync::oneshot};
@@ -116,18 +116,6 @@ impl Conn {
             .map_err(|e| ErrorKind::Io(e).into())
     }
 
-    /// If you have a stream that produces `Message`s, you can forward that directly to
-    /// the inner `Sink` instead of calling the helper methods.
-    pub fn forward<S>(self, stream: S) -> impl Future<Item = Self, Error = Error>
-    where
-        S: Stream<Item = Message, Error = Error>,
-    {
-        let inner = self.inner;
-        stream
-            .forward(self.sender)
-            .map(|(_, sender)| Conn { sender, inner })
-    }
-
     /// Inform the broker that you will be providing a new namespace
     pub fn provide(&mut self, namespace: Pattern) -> Result<()> {
         Ok(self.sender.try_send(Message::Provide(namespace))?)
@@ -204,6 +192,19 @@ impl Conn {
         Ok(self
             .sender
             .try_send(Message::Event(namespace, data.into()))?)
+    }
+}
+
+impl Sink for Conn {
+    type SinkItem = Message;
+    type SinkError = mpsc::error::UnboundedSendError;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        self.sender.start_send(item)
+    }
+
+    fn poll_complete(&mut self) -> result::Result<Async<()>, Self::SinkError> {
+        self.sender.poll_complete()
     }
 }
 
@@ -295,7 +296,7 @@ mod tests {
             Message::Event("/a".into(), "b".into()),
             Message::Provide("/a".into()),
         ]);
-        conn.forward(data_stream).wait().unwrap();
+        data_stream.forward(conn).wait().unwrap();
 
         // We check these messages in reverse order (i.e. Provide, then Event), because
         // our budget DIY stream sends them in reverse order.
