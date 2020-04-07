@@ -19,7 +19,7 @@ jobs:
 
       - name: Get crate version
         id: version
-        run: echo ::set-output name=value::$(sed -ne 's/version = "\(.*\)"/\1/p' < Cargo.toml)
+        run: echo ::set-output name=value::$(sed -ne 's/^version = "\(.*\)"/\1/p' < Cargo.toml)
 
       - name: Check changelog
         run: python ci/changelog.py ${{ steps.version.outputs.value }}
@@ -39,11 +39,11 @@ jobs:
 
       - name: Get crate version
         id: version
-        run: echo ::set-output name=value::$(sed -ne 's/version = "\(.*\)"/\1/p' < Cargo.toml)
+        run: echo ::set-output name=value::$(sed -ne 's/^version = "\(.*\)"/\1/p' < Cargo.toml)
 
       - name: Get old crate version
         id: old_version
-        run: echo ::set-output name=value::$(sed -ne 's/version = "\(.*\)"/\1/p' < head/Cargo.toml)
+        run: echo ::set-output name=value::$(sed -ne 's/^version = "\(.*\)"/\1/p' < head/Cargo.toml)
 
       - name: Verify that version has been changed
         run: \[ "${{ steps.version.outputs.value }}" != "${{ steps.old_version.outputs.value }}" \]
