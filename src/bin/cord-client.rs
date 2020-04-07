@@ -3,12 +3,13 @@ use clap::{
 };
 use cord_client::{errors::*, Conn};
 use env_logger;
-use futures::{future::join_all, Future, Stream};
+use futures::{future, future::join_all, StreamExt, TryFutureExt, TryStreamExt};
 use log::error;
-use std::{io::BufReader, net::SocketAddr};
-use tokio::io;
+use std::net::SocketAddr;
+use tokio::io::{self, AsyncBufReadExt};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     env_logger::init();
 
     let matches = App::new(crate_name!())
@@ -71,69 +72,68 @@ fn main() -> Result<()> {
         publish(
             sock_addr,
             provides.into_iter().map(|s| s.to_owned()).collect(),
-        );
+        )
+        .await?;
     } else if let Some(matches) = matches.subcommand_matches("sub") {
         let subscribes: Vec<&str> = matches.values_of("subscribe").unwrap().collect();
         subscribe(
             sock_addr,
             subscribes.into_iter().map(|s| s.to_owned()).collect(),
-        );
+        )
+        .await?;
     }
 
     Ok(())
 }
 
-fn publish(sock_addr: SocketAddr, provides: Vec<String>) {
-    let conn = Conn::new(sock_addr).and_then(move |mut conn| {
-        // Send provides
-        provides.into_iter().for_each(|namespace| {
-            conn.provide(namespace.into())
-                .expect("Could not send PROVIDE message")
-        });
+async fn publish(sock_addr: SocketAddr, provides: Vec<String>) -> Result<()> {
+    let mut conn = Conn::new(sock_addr).await?;
 
-        print!("\x1B[2J\x1B[H");
-        println!("Start typing to create an event, then press enter to send it to the broker.");
-        println!("Use the format: NAMESPACE=VALUE");
-        println!();
+    // Send provides
+    for namespace in provides {
+        conn.provide(namespace.into()).await?;
+    }
 
-        // Send events
-        let stdin = io::lines(BufReader::new(io::stdin()))
-            .map_err(|e| ErrorKind::Msg(e.to_string()).into());
-        stdin.for_each(move |event| {
+    print!("\x1B[2J\x1B[H");
+    println!("Start typing to create an event, then press enter to send it to the broker.");
+    println!("Use the format: NAMESPACE=VALUE");
+    println!();
+
+    // Send events
+    io::BufReader::new(io::stdin())
+        .lines()
+        .map_err(|e| ErrorKind::Msg(e.to_string()).into())
+        .try_fold(conn, |mut conn, event| async move {
             let parts: Vec<&str> = event.split('=').collect();
 
             // Check that the input has a namespace and a value
             if parts.len() == 2 {
-                conn.event(parts[0].into(), parts[1])
-                    .expect("Could not send EVENT message");
+                conn.event(parts[0].into(), parts[1]).await?;
             } else {
                 error!("Events must be in format NAMESPACE=VALUE");
             }
 
-            Ok(())
+            Ok(conn)
         })
-    });
-
-    tokio::run(conn.map(|_| ()).map_err(|e| error!("{}", e)));
+        .map_ok(|_| ())
+        .await
 }
 
-fn subscribe(sock_addr: SocketAddr, subscribes: Vec<String>) {
-    let conn = Conn::new(sock_addr).and_then(move |mut conn| {
-        let mut futs = Vec::new();
+async fn subscribe(sock_addr: SocketAddr, subscribes: Vec<String>) -> Result<()> {
+    let mut conn = Conn::new(sock_addr).await?;
+    let mut futs = Vec::new();
 
-        for namespace in subscribes {
-            futs.push(
-                conn.subscribe(namespace.into())
-                    .expect("Could not send SUBSCRIBE message")
-                    .for_each(|(p, s)| {
-                        println!("{:?}: {}", p, s);
-                        Ok(())
-                    }),
-            );
-        }
+    for namespace in subscribes {
+        // We can't chain this to the for_each as `conn` is mutably borrowed
+        // asynchronously. Perhaps someone smarter than me can find away around that?
+        let s = conn.subscribe(namespace.into()).await?;
 
-        join_all(futs).map(|_| ())
-    });
+        futs.push(s.for_each(|(p, s)| {
+            println!("{:?}: {}", p, s);
+            future::ready(())
+        }));
+    }
 
-    tokio::run(conn.map(|_| ()).map_err(|e| error!("{}", e)));
+    join_all(futs).await;
+    Ok(())
 }
