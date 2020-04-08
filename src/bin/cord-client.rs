@@ -1,11 +1,10 @@
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
 };
-use cord_client::{errors::*, Conn};
+use cord_client::{errors::*, Client};
 use env_logger;
 use futures::{future, future::join_all, StreamExt, TryFutureExt, TryStreamExt};
 use log::error;
-use std::net::SocketAddr;
 use tokio::io::{self, AsyncBufReadExt};
 
 #[tokio::main]
@@ -66,29 +65,22 @@ async fn main() -> Result<()> {
         .parse()
         .expect("Invalid broker address");
 
+    // Connect to the broker
+    let conn = Client::connect(sock_addr).await?;
+
     if let Some(matches) = matches.subcommand_matches("pub") {
         let provides: Vec<&str> = matches.values_of("provide").unwrap().collect();
 
-        publish(
-            sock_addr,
-            provides.into_iter().map(|s| s.to_owned()).collect(),
-        )
-        .await?;
+        publish(conn, provides.into_iter().map(|s| s.to_owned()).collect()).await?;
     } else if let Some(matches) = matches.subcommand_matches("sub") {
         let subscribes: Vec<&str> = matches.values_of("subscribe").unwrap().collect();
-        subscribe(
-            sock_addr,
-            subscribes.into_iter().map(|s| s.to_owned()).collect(),
-        )
-        .await?;
+        subscribe(conn, subscribes.into_iter().map(|s| s.to_owned()).collect()).await?;
     }
 
     Ok(())
 }
 
-async fn publish(sock_addr: SocketAddr, provides: Vec<String>) -> Result<()> {
-    let mut conn = Conn::new(sock_addr).await?;
-
+async fn publish(mut conn: Client, provides: Vec<String>) -> Result<()> {
     // Send provides
     for namespace in provides {
         conn.provide(namespace.into()).await?;
@@ -119,8 +111,7 @@ async fn publish(sock_addr: SocketAddr, provides: Vec<String>) -> Result<()> {
         .await
 }
 
-async fn subscribe(sock_addr: SocketAddr, subscribes: Vec<String>) -> Result<()> {
-    let mut conn = Conn::new(sock_addr).await?;
+async fn subscribe(mut conn: Client, subscribes: Vec<String>) -> Result<()> {
     let mut futs = Vec::new();
 
     for namespace in subscribes {
