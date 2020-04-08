@@ -4,9 +4,9 @@ use tokio::sync::mpsc::error::{RecvError, SendError, TrySendError};
 
 error_chain! {
     foreign_links {
-        ConnRecv(RecvError);
-        ConnSend(TrySendError<Message>);
-        ConnForward(SendError<Message>);
+        ClientRecv(RecvError);
+        ClientSend(TrySendError<Message>);
+        ClientForward(SendError<Message>);
         Io(::std::io::Error);
         Message(cord_message::errors::Error);
         Terminate(::tokio::sync::oneshot::error::RecvError);

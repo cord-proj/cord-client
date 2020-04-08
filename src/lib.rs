@@ -21,17 +21,17 @@ use std::{
     task::{Context, Poll},
 };
 
-/// A `Conn` is used to connect to and communicate with a broker.
+/// A `Client` is used to connect to and communicate with a broker.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// use cord_client::{errors::Result, Conn};
+/// use cord_client::{errors::Result, Client};
 /// use futures::{future, Future};
 /// use tokio;
 ///
 ///# async fn test() -> Result<()> {
-/// let mut conn = Conn::new("127.0.0.1:7101".parse().unwrap()).await?;
+/// let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
 ///
 /// // Tell the broker we're going to provide the namespace /users
 /// conn.provide("/users".into()).await?;
@@ -42,22 +42,22 @@ use std::{
 ///# Ok(())
 ///# }
 /// ```
-pub struct Conn {
+pub struct Client {
     sink: SplitSink<Framed<TcpStream, Codec>, Message>,
     inner: Arc<Inner>,
 }
 
 /// A `Subscriber` encapsulates a stream of events for a subscribed namespace. It is
-/// created by [`Conn::subscribe()`](struct.Conn.html#method.subscribe).
+/// created by [`Client::subscribe()`](struct.Client.html#method.subscribe).
 ///
 /// # Examples
 ///
 /// ```
-///# use cord_client::{errors::Result, Conn};
+///# use cord_client::{errors::Result, Client};
 ///# use futures::{future, StreamExt, TryFutureExt};
 ///
 ///# async fn test() -> Result<()> {
-/// let mut conn = Conn::new("127.0.0.1:7101".parse().unwrap()).await?;
+/// let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
 /// conn.subscribe("/users/".into())
 ///     .and_then(|sub| async {
 ///         sub.for_each(|(namespace, data)| {
@@ -81,10 +81,10 @@ struct Inner {
     detonator: Option<oneshot::Sender<()>>,
 }
 
-impl Conn {
+impl Client {
     /// Connect to a broker
-    pub async fn new(addr: SocketAddr) -> Result<Conn> {
-        // This channel is used to shutdown the stream listener when the Conn is dropped
+    pub async fn connect(addr: SocketAddr) -> Result<Client> {
+        // This channel is used to shutdown the stream listener when the Client is dropped
         let (det_tx, det_rx) = oneshot::channel();
 
         // Connect to the broker
@@ -110,7 +110,7 @@ impl Conn {
 
         tokio::spawn(try_select(router, det_rx));
 
-        Ok(Conn {
+        Ok(Client {
             sink,
             inner: Arc::new(Inner {
                 receivers,
@@ -140,11 +140,11 @@ impl Conn {
     /// # Examples
     ///
     /// ```
-    ///# use cord_client::{errors::Result, Conn};
+    ///# use cord_client::{errors::Result, Client};
     ///# use futures::{future, StreamExt, TryFutureExt};
     ///
     ///# async fn test() -> Result<()> {
-    /// let mut conn = Conn::new("127.0.0.1:7101".parse().unwrap()).await?;
+    /// let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
     /// conn.subscribe("/users/".into())
     ///     .and_then(|sub| async {
     ///         sub.for_each(|(namespace, data)| {
@@ -207,7 +207,7 @@ impl Conn {
     }
 }
 
-impl Sink<Message> for Conn {
+impl Sink<Message> for Client {
     type Error = Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<result::Result<(), Self::Error>> {
@@ -296,10 +296,10 @@ async fn route(
 //         }
 //     }
 //
-//     fn setup_conn() -> Conn {
+//     fn setup_conn() -> Client {
 //         let (det_tx, _) = oneshot::channel();
 //
-//         Conn {
+//         Client {
 //             sink: tx,
 //             inner: Arc::new(Inner {
 //                 receivers: Mutex::new(HashMap::new()),
@@ -332,7 +332,7 @@ async fn route(
 //         let (tx, rx) = mpsc::unbounded_channel();
 //         let (det_tx, _det_rx) = oneshot::channel();
 //
-//         let mut conn = Conn {
+//         let mut conn = Client {
 //             sender: tx,
 //             inner: Arc::new(Inner {
 //                 receivers: Mutex::new(HashMap::new()),
@@ -352,7 +352,7 @@ async fn route(
 //         let (tx, rx) = mpsc::unbounded_channel();
 //         let (det_tx, _det_rx) = oneshot::channel();
 //
-//         let mut conn = Conn {
+//         let mut conn = Client {
 //             sender: tx,
 //             inner: Arc::new(Inner {
 //                 receivers: Mutex::new(HashMap::new()),
@@ -375,7 +375,7 @@ async fn route(
 //         let receivers: Mutex<HashMap<Pattern, Vec<mpsc::Sender<Message>>>> =
 //             Mutex::new(HashMap::new());
 //
-//         let mut conn = Conn {
+//         let mut conn = Client {
 //             sender: tx,
 //             inner: Arc::new(Inner {
 //                 receivers: receivers.clone(),
@@ -405,7 +405,7 @@ async fn route(
 //         receivers.insert("/a/b".into(), Vec::new());
 //         let receivers = Mutex::new(receivers);
 //
-//         let mut conn = Conn {
+//         let mut conn = Client {
 //             sender: tx,
 //             inner: Arc::new(Inner {
 //                 receivers: receivers.clone(),
@@ -431,7 +431,7 @@ async fn route(
 //         let (tx, rx) = mpsc::unbounded_channel();
 //         let (det_tx, _det_rx) = oneshot::channel();
 //
-//         let mut conn = Conn {
+//         let mut conn = Client {
 //             sender: tx,
 //             inner: Arc::new(Inner {
 //                 receivers: Mutex::new(HashMap::new()),
