@@ -1,6 +1,6 @@
 pub mod errors;
 
-use cord_message::{Codec, Message, Pattern};
+use cord_message::{errors::Error as MessageError, Codec, Message, Pattern};
 use errors::{Error, ErrorKind, Result};
 use futures::{
     compat::Compat01As03, future::try_select, stream::SplitSink, Sink, SinkExt, Stream, StreamExt,
@@ -13,6 +13,7 @@ use tokio_util::codec::Framed;
 
 use std::{
     collections::HashMap,
+    convert::Into,
     net::SocketAddr,
     ops::Drop,
     pin::Pin,
@@ -20,6 +21,8 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+
+pub type Client = ClientStruct<SplitSink<Framed<TcpStream, Codec>, Message>>;
 
 /// A `Client` is used to connect to and communicate with a broker.
 ///
@@ -42,8 +45,8 @@ use std::{
 ///# Ok(())
 ///# }
 /// ```
-pub struct Client {
-    sink: SplitSink<Framed<TcpStream, Codec>, Message>,
+pub struct ClientStruct<S> {
+    sink: S,
     inner: Arc<Inner>,
 }
 
@@ -81,7 +84,10 @@ struct Inner {
     detonator: Option<oneshot::Sender<()>>,
 }
 
-impl Client {
+impl<S> ClientStruct<S>
+where
+    S: Sink<Message, Error = MessageError> + Unpin,
+{
     /// Connect to a broker
     pub async fn connect(addr: SocketAddr) -> Result<Client> {
         // This channel is used to shutdown the stream listener when the Client is dropped
@@ -110,7 +116,7 @@ impl Client {
 
         tokio::spawn(try_select(router, det_rx));
 
-        Ok(Client {
+        Ok(ClientStruct {
             sink,
             inner: Arc::new(Inner {
                 receivers,
@@ -199,7 +205,7 @@ impl Client {
     }
 
     /// Publish an event to your subscribers
-    pub async fn event<S: Into<String>>(&mut self, namespace: Pattern, data: S) -> Result<()> {
+    pub async fn event<Str: Into<String>>(&mut self, namespace: Pattern, data: Str) -> Result<()> {
         self.sink
             .send(Message::Event(namespace, data.into()))
             .await
@@ -207,31 +213,35 @@ impl Client {
     }
 }
 
-impl Sink<Message> for Client {
+impl<E, S, T> Sink<T> for ClientStruct<S>
+where
+    S: Sink<T, Error = E>,
+    E: Into<Error>,
+{
     type Error = Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<result::Result<(), Self::Error>> {
         unsafe { Pin::map_unchecked_mut(self, |x| &mut x.sink) }
             .poll_ready(cx)
-            .map_err(|e| ErrorKind::Message(e).into())
+            .map_err(|e| e.into())
     }
 
-    fn start_send(self: Pin<&mut Self>, item: Message) -> result::Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: T) -> result::Result<(), Self::Error> {
         unsafe { Pin::map_unchecked_mut(self, |x| &mut x.sink) }
             .start_send(item)
-            .map_err(|e| ErrorKind::Message(e).into())
+            .map_err(|e| e.into())
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<result::Result<(), Self::Error>> {
         unsafe { Pin::map_unchecked_mut(self, |x| &mut x.sink) }
             .poll_flush(cx)
-            .map_err(|e| ErrorKind::Message(e).into())
+            .map_err(|e| e.into())
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<result::Result<(), Self::Error>> {
         unsafe { Pin::map_unchecked_mut(self, |x| &mut x.sink) }
             .poll_close(cx)
-            .map_err(|e| ErrorKind::Message(e).into())
+            .map_err(|e| e.into())
     }
 }
 
@@ -251,7 +261,13 @@ impl Stream for Subscriber {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        self.detonator.take().unwrap().send(()).unwrap();
+        // Ignore any error from the channel as an error indicates that the other side
+        // has already terminated.
+        let _ = self
+            .detonator
+            .take()
+            .expect("Inner has already been terminated")
+            .send(());
     }
 }
 
@@ -282,210 +298,184 @@ async fn route(
     .await
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use futures::future;
-//
-//     struct ForwardStream(Vec<Message>);
-//     impl Stream for ForwardStream {
-//         type Item = Message;
-//
-//         fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-//             Poll::Ready(self.0.pop())
-//         }
-//     }
-//
-//     fn setup_conn() -> Client {
-//         let (det_tx, _) = oneshot::channel();
-//
-//         Client {
-//             sink: tx,
-//             inner: Arc::new(Inner {
-//                 receivers: Mutex::new(HashMap::new()),
-//                 detonator: Some(det_tx),
-//             }),
-//         }
-//     }
-//
-//     #[tokio::test]
-//     async fn test_forward() {
-//         let conn = setup_conn();
-//
-//         let data_stream = ForwardStream(vec![
-//             Message::Event("/a".into(), "b".into()),
-//             Message::Provide("/a".into()),
-//         ]);
-//         data_stream.forward(conn).await.unwrap();
-//
-//         // We check these messages in reverse order (i.e. Provide, then Event), because
-//         // our budget DIY stream sends them in reverse order.
-//         let (item, rx) = rx.into_future().wait().unwrap();
-//         assert_eq!(item, Some(Message::Provide("/a".into())));
-//
-//         let (item, _) = rx.into_future().wait().unwrap();
-//         assert_eq!(item, Some(Message::Event("/a".into(), "b".into())));
-//     }
-//
-//     #[test]
-//     fn test_provide() {
-//         let (tx, rx) = mpsc::unbounded_channel();
-//         let (det_tx, _det_rx) = oneshot::channel();
-//
-//         let mut conn = Client {
-//             sender: tx,
-//             inner: Arc::new(Inner {
-//                 receivers: Mutex::new(HashMap::new()),
-//                 detonator: Some(det_tx),
-//             }),
-//         };
-//
-//         conn.provide("/a/b".into()).unwrap();
-//         assert_eq!(
-//             rx.into_future().wait().unwrap().0.unwrap(),
-//             Message::Provide("/a/b".into())
-//         );
-//     }
-//
-//     #[test]
-//     fn test_revoke() {
-//         let (tx, rx) = mpsc::unbounded_channel();
-//         let (det_tx, _det_rx) = oneshot::channel();
-//
-//         let mut conn = Client {
-//             sender: tx,
-//             inner: Arc::new(Inner {
-//                 receivers: Mutex::new(HashMap::new()),
-//                 detonator: Some(det_tx),
-//             }),
-//         };
-//
-//         conn.revoke("/a/b".into()).unwrap();
-//         assert_eq!(
-//             rx.into_future().wait().unwrap().0.unwrap(),
-//             Message::Revoke("/a/b".into())
-//         );
-//     }
-//
-//     #[test]
-//     fn test_subscribe() {
-//         let (tx, rx) = mpsc::unbounded_channel();
-//         let (det_tx, _det_rx) = oneshot::channel();
-//
-//         let receivers: Mutex<HashMap<Pattern, Vec<mpsc::Sender<Message>>>> =
-//             Mutex::new(HashMap::new());
-//
-//         let mut conn = Client {
-//             sender: tx,
-//             inner: Arc::new(Inner {
-//                 receivers: receivers.clone(),
-//                 detonator: Some(det_tx),
-//             }),
-//         };
-//
-//         // All this extra fluff around future::lazy() is necessary to ensure that there
-//         // is an active executor when the fn calls Mutex::with().
-//         tokio::run(future::lazy(move || {
-//             conn.subscribe("/a/b".into()).unwrap();
-//             Ok(())
-//         }));
-//         assert_eq!(
-//             rx.into_future().wait().unwrap().0.unwrap(),
-//             Message::Subscribe("/a/b".into())
-//         );
-//         assert!(receivers.try_unwrap().unwrap().contains_key(&"/a/b".into()));
-//     }
-//
-//     #[test]
-//     fn test_unsubscribe() {
-//         let (tx, rx) = mpsc::unbounded_channel();
-//         let (det_tx, _det_rx) = oneshot::channel();
-//
-//         let mut receivers: HashMap<Pattern, Vec<mpsc::Sender<Message>>> = HashMap::new();
-//         receivers.insert("/a/b".into(), Vec::new());
-//         let receivers = Mutex::new(receivers);
-//
-//         let mut conn = Client {
-//             sender: tx,
-//             inner: Arc::new(Inner {
-//                 receivers: receivers.clone(),
-//                 detonator: Some(det_tx),
-//             }),
-//         };
-//
-//         // All this extra fluff around future::lazy() is necessary to ensure that there
-//         // is an active executor when the fn calls Mutex::with().
-//         tokio::run(future::lazy(move || {
-//             conn.unsubscribe("/a/b".into()).unwrap();
-//             Ok(())
-//         }));
-//         assert_eq!(
-//             rx.into_future().wait().unwrap().0.unwrap(),
-//             Message::Unsubscribe("/a/b".into())
-//         );
-//         assert!(receivers.try_unwrap().unwrap().is_empty());
-//     }
-//
-//     #[test]
-//     fn test_event() {
-//         let (tx, rx) = mpsc::unbounded_channel();
-//         let (det_tx, _det_rx) = oneshot::channel();
-//
-//         let mut conn = Client {
-//             sender: tx,
-//             inner: Arc::new(Inner {
-//                 receivers: Mutex::new(HashMap::new()),
-//                 detonator: Some(det_tx),
-//             }),
-//         };
-//
-//         conn.event("/a/b".into(), "moo").unwrap();
-//         assert_eq!(
-//             rx.into_future().wait().unwrap().0.unwrap(),
-//             Message::Event("/a/b".into(), "moo".into())
-//         );
-//     }
-//
-//     #[test]
-//     fn test_route() {
-//         let (tx, rx) = mpsc::channel(10);
-//
-//         let mut receivers = HashMap::new();
-//         receivers.insert("/a/b".into(), vec![tx]);
-//         let receivers = Mutex::new(receivers);
-//         let receivers_c = receivers.clone();
-//
-//         let event_msg = Message::Event("/a/b".into(), "Moo!".into());
-//         let event_msg_c = event_msg.clone();
-//
-//         // All this extra fluff around future::lazy() is necessary to ensure that there
-//         // is an active executor when the fn calls Mutex::with().
-//         tokio::run(future::lazy(move || {
-//             route(&receivers, event_msg).map_err(|_| ())
-//         }));
-//
-//         assert_eq!(rx.into_future().wait().unwrap().0.unwrap(), event_msg_c);
-//         assert!(receivers_c
-//             .try_unwrap()
-//             .unwrap()
-//             .contains_key(&"/a/b".into()));
-//     }
-//
-//     #[test]
-//     fn test_route_norecv() {
-//         let (tx, _) = mpsc::channel(10);
-//
-//         let mut receivers = HashMap::new();
-//         receivers.insert("/a/b".into(), vec![tx]);
-//         let receivers = Mutex::new(receivers);
-//         let receivers_c = receivers.clone();
-//
-//         // All this extra fluff around future::lazy() is necessary to ensure that there
-//         // is an active executor when the fn calls Mutex::with().
-//         tokio::run(future::lazy(move || {
-//             route(&receivers, Message::Event("/a/b".into(), "Moo!".into())).map_err(|_| ())
-//         }));
-//
-//         assert!(receivers_c.try_unwrap().unwrap().is_empty());
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use cord_message::errors::ErrorKind as MessageErrorKind;
+
+    // Using Futures channel instead of Tokio as Tokio's channel implementation is
+    // missing a Sink implementation
+    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
+
+    struct ForwardStream(Vec<Message>);
+
+    impl Stream for ForwardStream {
+        type Item = Result<Message>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.0.pop().map(Ok))
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn setup_client() -> (
+        ClientStruct<impl Sink<Message, Error = MessageError>>,
+        UnboundedReceiver<Message>,
+        Mutex<HashMap<Pattern, Vec<mpsc::Sender<Message>>>>,
+    ) {
+        let (tx, rx) = unbounded();
+        let (det_tx, _) = oneshot::channel();
+        let receivers = Mutex::new(HashMap::new());
+
+        (
+            ClientStruct {
+                sink: tx.sink_map_err(|e| MessageErrorKind::Msg(format!("{}", e)).into()),
+                inner: Arc::new(Inner {
+                    receivers: receivers.clone(),
+                    detonator: Some(det_tx),
+                }),
+            },
+            rx,
+            receivers,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_forward() {
+        let (client, rx, _) = setup_client();
+
+        let data_stream = ForwardStream(vec![
+            Message::Event("/a".into(), "b".into()),
+            Message::Provide("/a".into()),
+        ]);
+        data_stream.forward(client).await.unwrap();
+
+        // We check these messages in reverse order (i.e. Provide, then Event), because
+        // our budget DIY stream sends them in reverse order.
+        let (item, rx) = rx.into_future().await;
+        assert_eq!(item, Some(Message::Provide("/a".into())));
+
+        let (item, _) = rx.into_future().await;
+        assert_eq!(item, Some(Message::Event("/a".into(), "b".into())));
+    }
+
+    #[tokio::test]
+    async fn test_provide() {
+        let (mut client, rx, _) = setup_client();
+
+        client.provide("/a/b".into()).await.unwrap();
+        assert_eq!(
+            rx.into_future().await.0.unwrap(),
+            Message::Provide("/a/b".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_revoke() {
+        let (mut client, rx, _) = setup_client();
+
+        client.revoke("/a/b".into()).await.unwrap();
+        assert_eq!(
+            rx.into_future().await.0.unwrap(),
+            Message::Revoke("/a/b".into())
+        );
+    }
+
+    // #[tokio::test]
+    // async fn test_subscribe() {
+    //     let (mut client, rx, receivers) = setup_client();
+    //
+    //     client.subscribe("/a/b".into()).await.unwrap();
+    //
+    //     assert_eq!(
+    //         rx.into_future().await.0.unwrap(),
+    //         Message::Subscribe("/a/b".into())
+    //     );
+    //     assert!(receivers.try_unwrap().unwrap().contains_key(&"/a/b".into()));
+    // }
+    //
+    // #[test]
+    // fn test_unsubscribe() {
+    //     let (tx, rx) = mpsc::unbounded_channel();
+    //     let (det_tx, _det_rx) = oneshot::channel();
+    //
+    //     let mut receivers: HashMap<Pattern, Vec<mpsc::Sender<Message>>> = HashMap::new();
+    //     receivers.insert("/a/b".into(), Vec::new());
+    //     let receivers = Mutex::new(receivers);
+    //
+    //     let mut conn = Client {
+    //         sender: tx,
+    //         inner: Arc::new(Inner {
+    //             receivers: receivers.clone(),
+    //             detonator: Some(det_tx),
+    //         }),
+    //     };
+    //
+    //     // All this extra fluff around future::lazy() is necessary to ensure that there
+    //     // is an active executor when the fn calls Mutex::with().
+    //     tokio::run(future::lazy(move || {
+    //         conn.unsubscribe("/a/b".into()).unwrap();
+    //         Ok(())
+    //     }));
+    //     assert_eq!(
+    //         rx.into_future().wait().unwrap().0.unwrap(),
+    //         Message::Unsubscribe("/a/b".into())
+    //     );
+    //     assert!(receivers.try_unwrap().unwrap().is_empty());
+    // }
+
+    #[tokio::test]
+    async fn test_event() {
+        let (mut client, rx, _) = setup_client();
+
+        client.event("/a/b".into(), "moo").await.unwrap();
+        assert_eq!(
+            rx.into_future().await.0.unwrap(),
+            Message::Event("/a/b".into(), "moo".into())
+        );
+    }
+
+    // #[test]
+    // fn test_route() {
+    //     let (tx, rx) = mpsc::channel(10);
+    //
+    //     let mut receivers = HashMap::new();
+    //     receivers.insert("/a/b".into(), vec![tx]);
+    //     let receivers = Mutex::new(receivers);
+    //     let receivers_c = receivers.clone();
+    //
+    //     let event_msg = Message::Event("/a/b".into(), "Moo!".into());
+    //     let event_msg_c = event_msg.clone();
+    //
+    //     // All this extra fluff around future::lazy() is necessary to ensure that there
+    //     // is an active executor when the fn calls Mutex::with().
+    //     tokio::run(future::lazy(move || {
+    //         route(&receivers, event_msg).map_err(|_| ())
+    //     }));
+    //
+    //     assert_eq!(rx.into_future().wait().unwrap().0.unwrap(), event_msg_c);
+    //     assert!(receivers_c
+    //         .try_unwrap()
+    //         .unwrap()
+    //         .contains_key(&"/a/b".into()));
+    // }
+    //
+    // #[test]
+    // fn test_route_norecv() {
+    //     let (tx, _) = mpsc::channel(10);
+    //
+    //     let mut receivers = HashMap::new();
+    //     receivers.insert("/a/b".into(), vec![tx]);
+    //     let receivers = Mutex::new(receivers);
+    //     let receivers_c = receivers.clone();
+    //
+    //     // All this extra fluff around future::lazy() is necessary to ensure that there
+    //     // is an active executor when the fn calls Mutex::with().
+    //     tokio::run(future::lazy(move || {
+    //         route(&receivers, Message::Event("/a/b".into(), "Moo!".into())).map_err(|_| ())
+    //     }));
+    //
+    //     assert!(receivers_c.try_unwrap().unwrap().is_empty());
+    // }
+}
