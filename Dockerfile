@@ -2,6 +2,7 @@
 FROM rust:alpine as builder
 WORKDIR /usr/src/cord
 COPY . .
+ENV RUSTFLAGS="-C target-feature=-crt-static"
 RUN apk update && \
     apk upgrade && \
     apk add --update alpine-sdk && \
