@@ -3,10 +3,11 @@ pub mod errors;
 use cord_message::{errors::Error as MessageError, Codec, Message, Pattern};
 use errors::{Error, ErrorKind, Result};
 use futures::{
-    compat::Compat01As03, future::try_select, stream::SplitSink, Sink, SinkExt, Stream, StreamExt,
-    TryStreamExt,
+    future::{self, try_select},
+    stream::SplitSink,
+    Sink, SinkExt, Stream, StreamExt, TryStreamExt,
 };
-use futures_locks::Mutex;
+use futures_locks_pre::Mutex;
 use retain_mut::RetainMut;
 use tokio::{net::TcpStream, sync::mpsc, sync::oneshot};
 use tokio_util::codec::Framed;
@@ -109,7 +110,7 @@ where
             stream
                 .map_err(|e| Error::from_kind(ErrorKind::Message(e)))
                 .try_fold(receivers_c, |recv, message| async move {
-                    route(&recv, message).await?;
+                    route(&recv, message).await;
                     Ok(recv)
                 }),
         );
@@ -169,18 +170,16 @@ where
         self.sink.send(Message::Subscribe(namespace)).await?;
 
         let (tx, rx) = mpsc::channel(10);
-        tokio::spawn(Compat01As03::new(
-            self.inner
-                .receivers
-                .with(move |mut guard| {
-                    (*guard)
-                        .entry(namespace_c)
-                        .or_insert_with(Vec::new)
-                        .push(tx);
-                    Result::Ok(()) // Leave as Result::Ok for Error type elision
-                })
-                .expect("The default executor has shut down"),
-        ));
+        self.inner
+            .receivers
+            .with(move |mut guard| {
+                (*guard)
+                    .entry(namespace_c)
+                    .or_insert_with(Vec::new)
+                    .push(tx);
+                future::ready(())
+            })
+            .await;
         Ok(Subscriber {
             receiver: rx,
             _inner: self.inner.clone(),
@@ -192,15 +191,13 @@ where
         let namespace_c = namespace.clone();
         self.sink.send(Message::Unsubscribe(namespace)).await?;
 
-        tokio::spawn(Compat01As03::new(
-            self.inner
-                .receivers
-                .with(move |mut guard| {
-                    (*guard).remove(&namespace_c);
-                    Result::Ok(()) // Leave as Result::Ok for Error type elision
-                })
-                .expect("The default executor has shut down"),
-        ));
+        self.inner
+            .receivers
+            .with(move |mut guard| {
+                (*guard).remove(&namespace_c);
+                future::ready(())
+            })
+            .await;
         Ok(())
     }
 
@@ -271,31 +268,25 @@ impl Drop for Inner {
     }
 }
 
-async fn route(
-    receivers: &Mutex<HashMap<Pattern, Vec<mpsc::Sender<Message>>>>,
-    message: Message,
-) -> Result<()> {
-    Compat01As03::new(
-        receivers
-            .with(move |mut guard| {
-                // Remove any subscribers that have no senders left
-                (*guard).retain(|namespace, senders| {
-                    // We assume that all messages will be Events. If this changes, we will
-                    // need to store a Message, not a pattern.
-                    if namespace.contains(message.namespace()) {
-                        // Remove any senders that give errors when attempting to send
-                        senders.retain_mut(|tx| tx.try_send(message.clone()).is_ok());
-                    }
+async fn route(receivers: &Mutex<HashMap<Pattern, Vec<mpsc::Sender<Message>>>>, message: Message) {
+    receivers
+        .with(move |mut guard| {
+            // Remove any subscribers that have no senders left
+            (*guard).retain(|namespace, senders| {
+                // We assume that all messages will be Events. If this changes, we will
+                // need to store a Message, not a pattern.
+                if namespace.contains(message.namespace()) {
+                    // Remove any senders that give errors when attempting to send
+                    senders.retain_mut(|tx| tx.try_send(message.clone()).is_ok());
+                }
 
-                    // So long as we have senders, keep the subscriber
-                    !senders.is_empty()
-                });
+                // So long as we have senders, keep the subscriber
+                !senders.is_empty()
+            });
 
-                Result::Ok(())
-            })
-            .expect("The default executor has shut down"),
-    )
-    .await
+            future::ready(())
+        })
+        .await
 }
 
 #[cfg(test)]
@@ -382,48 +373,46 @@ mod tests {
         );
     }
 
-    // #[tokio::test]
-    // async fn test_subscribe() {
-    //     let (mut client, rx, receivers) = setup_client();
-    //
-    //     client.subscribe("/a/b".into()).await.unwrap();
-    //
-    //     assert_eq!(
-    //         rx.into_future().await.0.unwrap(),
-    //         Message::Subscribe("/a/b".into())
-    //     );
-    //     assert!(receivers.try_unwrap().unwrap().contains_key(&"/a/b".into()));
-    // }
-    //
-    // #[test]
-    // fn test_unsubscribe() {
-    //     let (tx, rx) = mpsc::unbounded_channel();
-    //     let (det_tx, _det_rx) = oneshot::channel();
-    //
-    //     let mut receivers: HashMap<Pattern, Vec<mpsc::Sender<Message>>> = HashMap::new();
-    //     receivers.insert("/a/b".into(), Vec::new());
-    //     let receivers = Mutex::new(receivers);
-    //
-    //     let mut conn = Client {
-    //         sender: tx,
-    //         inner: Arc::new(Inner {
-    //             receivers: receivers.clone(),
-    //             detonator: Some(det_tx),
-    //         }),
-    //     };
-    //
-    //     // All this extra fluff around future::lazy() is necessary to ensure that there
-    //     // is an active executor when the fn calls Mutex::with().
-    //     tokio::run(future::lazy(move || {
-    //         conn.unsubscribe("/a/b".into()).unwrap();
-    //         Ok(())
-    //     }));
-    //     assert_eq!(
-    //         rx.into_future().wait().unwrap().0.unwrap(),
-    //         Message::Unsubscribe("/a/b".into())
-    //     );
-    //     assert!(receivers.try_unwrap().unwrap().is_empty());
-    // }
+    #[tokio::test]
+    async fn test_subscribe() {
+        let (mut client, rx, receivers) = setup_client();
+
+        client.subscribe("/a/b".into()).await.unwrap();
+
+        // Check that the mock broker (`rx`) has received our message
+        assert_eq!(
+            rx.into_future().await.0.unwrap(),
+            Message::Subscribe("/a/b".into())
+        );
+
+        // Check that the `receivers` routing table has been updated
+        let guard = receivers.lock().await;
+        assert!((*guard).contains_key(&"/a/b".into()));
+    }
+
+    #[tokio::test]
+    async fn test_unsubscribe() {
+        let (mut client, rx, receivers) = setup_client();
+
+        receivers
+            .with(|mut guard| {
+                (*guard).insert("/a/b".into(), Vec::new());
+                future::ready(())
+            })
+            .await;
+
+        client.unsubscribe("/a/b".into()).await.unwrap();
+
+        // Check that the mock broker (`rx`) has received our message
+        assert_eq!(
+            rx.into_future().await.0.unwrap(),
+            Message::Unsubscribe("/a/b".into())
+        );
+
+        // Check that the `receivers` routing table has been updated
+        let guard = receivers.lock().await;
+        assert!((*guard).is_empty());
+    }
 
     #[tokio::test]
     async fn test_event() {
@@ -436,46 +425,46 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn test_route() {
-    //     let (tx, rx) = mpsc::channel(10);
-    //
-    //     let mut receivers = HashMap::new();
-    //     receivers.insert("/a/b".into(), vec![tx]);
-    //     let receivers = Mutex::new(receivers);
-    //     let receivers_c = receivers.clone();
-    //
-    //     let event_msg = Message::Event("/a/b".into(), "Moo!".into());
-    //     let event_msg_c = event_msg.clone();
-    //
-    //     // All this extra fluff around future::lazy() is necessary to ensure that there
-    //     // is an active executor when the fn calls Mutex::with().
-    //     tokio::run(future::lazy(move || {
-    //         route(&receivers, event_msg).map_err(|_| ())
-    //     }));
-    //
-    //     assert_eq!(rx.into_future().wait().unwrap().0.unwrap(), event_msg_c);
-    //     assert!(receivers_c
-    //         .try_unwrap()
-    //         .unwrap()
-    //         .contains_key(&"/a/b".into()));
-    // }
-    //
-    // #[test]
-    // fn test_route_norecv() {
-    //     let (tx, _) = mpsc::channel(10);
-    //
-    //     let mut receivers = HashMap::new();
-    //     receivers.insert("/a/b".into(), vec![tx]);
-    //     let receivers = Mutex::new(receivers);
-    //     let receivers_c = receivers.clone();
-    //
-    //     // All this extra fluff around future::lazy() is necessary to ensure that there
-    //     // is an active executor when the fn calls Mutex::with().
-    //     tokio::run(future::lazy(move || {
-    //         route(&receivers, Message::Event("/a/b".into(), "Moo!".into())).map_err(|_| ())
-    //     }));
-    //
-    //     assert!(receivers_c.try_unwrap().unwrap().is_empty());
-    // }
+    #[tokio::test]
+    async fn test_route() {
+        let (tx, rx) = mpsc::channel(10);
+        let receivers = Mutex::new(HashMap::new());
+
+        receivers
+            .with(|mut guard| {
+                (*guard).insert("/a/b".into(), vec![tx]);
+                future::ready(())
+            })
+            .await;
+
+        let event_msg = Message::Event("/a/b".into(), "Moo!".into());
+        let event_msg_c = event_msg.clone();
+
+        route(&receivers, event_msg).await;
+
+        // Check that the subscriber has received our message
+        assert_eq!(rx.into_future().await.0.unwrap(), event_msg_c);
+
+        let guard = receivers.lock().await;
+        assert!((*guard).contains_key(&"/a/b".into()));
+    }
+
+    #[tokio::test]
+    async fn test_route_norecv() {
+        let (tx, _) = mpsc::channel(10);
+        let receivers = Mutex::new(HashMap::new());
+
+        receivers
+            .with(|mut guard| {
+                (*guard).insert("/a/b".into(), vec![tx]);
+                future::ready(())
+            })
+            .await;
+
+        route(&receivers, Message::Event("/a/b".into(), "Moo!".into())).await;
+
+        // Check that the unused receiver has been removed
+        let guard = receivers.lock().await;
+        assert!((*guard).is_empty());
+    }
 }
