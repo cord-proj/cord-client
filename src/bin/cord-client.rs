@@ -66,15 +66,19 @@ async fn main() -> Result<()> {
         .expect("Invalid broker address");
 
     // Connect to the broker
-    let conn = Client::connect(sock_addr).await?;
+    let client = Client::connect(sock_addr).await?;
 
     if let Some(matches) = matches.subcommand_matches("pub") {
         let provides: Vec<&str> = matches.values_of("provide").unwrap().collect();
 
-        publish(conn, provides.into_iter().map(|s| s.to_owned()).collect()).await?;
+        publish(client, provides.into_iter().map(|s| s.to_owned()).collect()).await?;
     } else if let Some(matches) = matches.subcommand_matches("sub") {
         let subscribes: Vec<&str> = matches.values_of("subscribe").unwrap().collect();
-        subscribe(conn, subscribes.into_iter().map(|s| s.to_owned()).collect()).await?;
+        subscribe(
+            client,
+            subscribes.into_iter().map(|s| s.to_owned()).collect(),
+        )
+        .await?;
     }
 
     Ok(())
