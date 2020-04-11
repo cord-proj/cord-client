@@ -29,7 +29,7 @@
 //! For one-off interactions with a Broker, there is also the Cord CLI, which is
 //! available via Cargo:
 //!
-//! ```no_run
+//! ```text
 //! $ cargo install cord-client
 //! $ cord-client sub /namespaces
 //! ```
