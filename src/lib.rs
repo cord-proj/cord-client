@@ -1,3 +1,41 @@
+//! Cord is a data streaming platform for composing, aggregating and distributing
+//! arbitrary streams. It uses a publish-subscribe model that allows multiple publishers
+//! to share their streams via a Cord Broker. Subscribers can then compose custom sinks
+//! using a regex-like pattern to access realtime data based on their individual
+//! requirements.
+//!
+//! To interact with a Broker, we use this library:
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use cord_client::Client;
+//!# use cord_client::errors::Error;
+//!
+//!# async fn test() -> Result<(), Error> {
+//! let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
+//!
+//! // Tell the broker we're going to provide the namespace /users
+//! conn.provide("/users".into()).await?;
+//!
+//! // Start publishing events...
+//! conn.event("/users/mark".into(), "Mark has joined").await?;
+//!
+//!# Ok(())
+//!# }
+//! ```
+//!
+//! # Cord CLI
+//! For one-off interactions with a Broker, there is also the Cord CLI, which is
+//! available via Cargo:
+//!
+//! ```no_run
+//! $ cargo install cord-client
+//! $ cord-client sub /namespaces
+//! ```
+//!
+//! For more usage, check the usage guidelines on [cord-proj.org](https://cord-proj.org).
+
 pub mod errors;
 
 use cord_message::{errors::Error as MessageError, Codec, Message, Pattern};
@@ -23,30 +61,21 @@ use std::{
     task::{Context, Poll},
 };
 
-pub type Client = ClientStruct<SplitSink<Framed<TcpStream, Codec>, Message>>;
+/// The `Client` type alias defines the `Sink` type for communicating with a Broker.
+///
+/// This type alias should be used for normal operation in favour of consuming
+/// `ClientConn` directly. This type is instantiated using
+/// [`Client::connect`](struct.ClientConn.html#method.connect).
+///
+/// The reason for this alias' existence is so that the `Sink` can be overridden for
+/// testing.
+pub type Client = ClientConn<SplitSink<Framed<TcpStream, Codec>, Message>>;
 
-/// A `Client` is used to connect to and communicate with a broker.
+/// The `ClientConn` manages the connection between you and a Cord Broker.
 ///
-/// # Examples
-///
-/// ```no_run
-/// use cord_client::{errors::Result, Client};
-/// use futures::{future, Future};
-/// use tokio;
-///
-///# async fn test() -> Result<()> {
-/// let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
-///
-/// // Tell the broker we're going to provide the namespace /users
-/// conn.provide("/users".into()).await?;
-///
-/// // Start publishing events...
-/// conn.event("/users/mark".into(), "Mark has joined").await?;
-///
-///# Ok(())
-///# }
-/// ```
-pub struct ClientStruct<S> {
+/// Using a generic `Sink` (`S`) allows us to build mocks for testing. However for normal
+/// use, it is strongly recommended to use the type alias, [`Client`](type.Client.html).
+pub struct ClientConn<S> {
     sink: S,
     inner: Arc<Inner>,
 }
@@ -85,7 +114,7 @@ struct Inner {
     detonator: Option<oneshot::Sender<()>>,
 }
 
-impl<S> ClientStruct<S>
+impl<S> ClientConn<S>
 where
     S: Sink<Message, Error = MessageError> + Unpin,
 {
@@ -117,7 +146,7 @@ where
 
         tokio::spawn(try_select(router, det_rx));
 
-        Ok(ClientStruct {
+        Ok(ClientConn {
             sink,
             inner: Arc::new(Inner {
                 receivers,
@@ -210,7 +239,7 @@ where
     }
 }
 
-impl<E, S, T> Sink<T> for ClientStruct<S>
+impl<E, S, T> Sink<T> for ClientConn<S>
 where
     S: Sink<T, Error = E>,
     E: Into<Error>,
@@ -311,7 +340,7 @@ mod tests {
 
     #[allow(clippy::type_complexity)]
     fn setup_client() -> (
-        ClientStruct<impl Sink<Message, Error = MessageError>>,
+        ClientConn<impl Sink<Message, Error = MessageError>>,
         UnboundedReceiver<Message>,
         Mutex<HashMap<Pattern, Vec<mpsc::Sender<Message>>>>,
     ) {
@@ -320,7 +349,7 @@ mod tests {
         let receivers = Mutex::new(HashMap::new());
 
         (
-            ClientStruct {
+            ClientConn {
                 sink: tx.sink_map_err(|e| MessageErrorKind::Msg(format!("{}", e)).into()),
                 inner: Arc::new(Inner {
                     receivers: receivers.clone(),
