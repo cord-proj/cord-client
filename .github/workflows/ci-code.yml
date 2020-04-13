@@ -80,3 +80,16 @@ jobs:
         with:
           command: clippy
           args: -- -D warnings
+
+  dockerfile:
+    name: Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Test build Dockerfile
+        uses: docker/build-push-action@v1
+        with:
+          repository: cordproj/cord-client
+          push: false
