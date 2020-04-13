@@ -11,7 +11,7 @@ on:
 
 jobs:
   changelog:
-    name: Changelog
+    name: Check Changelog Entry
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -25,7 +25,7 @@ jobs:
         run: python ci/changelog.py ${{ steps.version.outputs.value }}
 
   version:
-    name: Version
+    name: Check Version Bump
     runs-on: ubuntu-latest
     steps:
       - name: Checkout merge

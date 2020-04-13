@@ -6,7 +6,7 @@ on:
 
 jobs:
   audit:
-    name: Audit
+    name: Daily Crate Security Audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

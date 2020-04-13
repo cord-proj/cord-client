@@ -11,7 +11,7 @@ on:
 
 jobs:
   check:
-    name: Check
+    name: Cargo Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -30,7 +30,7 @@ jobs:
           command: check
 
   test:
-    name: Test Suite
+    name: Rust Test Suite
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -55,7 +55,7 @@ jobs:
           args: -- --ignored
 
   lints:
-    name: Lints
+    name: Rust Lints
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -82,7 +82,7 @@ jobs:
           args: -- -D warnings
 
   dockerfile:
-    name: Dockerfile
+    name: Test Build Dockerfile
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
