@@ -3,7 +3,7 @@ name: CD Release
 on:
   push:
     branches:
-      - releases
+      - master
 
 jobs:
   release:

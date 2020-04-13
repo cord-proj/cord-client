@@ -3,7 +3,7 @@ name: CI Check Release
 on:
   pull_request:
     branches:
-      - releases
+      - master
     types:
       - opened
       - reopened
