@@ -11,6 +11,8 @@ RUN apk update && \
 # Client CLI
 FROM alpine
 COPY --from=builder /usr/local/cargo/bin/cord-client /usr/local/bin/cord-client
-RUN apk update && apk upgrade
+RUN apk update && \
+    apk upgrade && \
+    apk add --update libgcc
 ENTRYPOINT ["cord-client"]
 CMD ["--help"]
