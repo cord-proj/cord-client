@@ -13,7 +13,7 @@ First, start a new [Cord Broker](https://github.com/cord-proj/cord-broker):
 
 **Docker**
 
-    $ docker run -d -p 7101:7101 --rm cord-broker
+    $ docker run -d -p 7101:7101 --rm cordproj/cord-broker:0
 
 **Cargo**
 
@@ -28,7 +28,7 @@ Subscribe to a namespace:
 
 **Docker**
 
-    $ docker run --rm cord-client -a <ip> sub /names
+    $ docker run --rm cordproj/cord-client:0 -a <broker_addr> sub /names
 
 **Cargo**
 
@@ -39,7 +39,7 @@ Publish to this namespace:
 
 **Docker**
 
-    $ docker run -it --rm cord-client -a <ip> pub /names
+    $ docker run -it --rm cordproj/cord-client:0 -a <broker_addr> pub /names
     Start typing to create an event, then press enter to send it to the broker.
     Use the format: NAMESPACE=VALUE
 

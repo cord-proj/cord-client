@@ -1,14 +1,18 @@
-use cord_message::Message;
+use cord_message::{errors::Error as MessageError, Message};
 use error_chain::*;
-use tokio::sync::mpsc::error::{RecvError, SendError, TrySendError};
+use std::io::Error as IoError;
+use tokio::sync::{
+    mpsc::error::{RecvError, SendError, TrySendError},
+    oneshot::error::RecvError as OneshotRecvError,
+};
 
 error_chain! {
     foreign_links {
         ClientRecv(RecvError);
         ClientSend(TrySendError<Message>);
         ClientForward(SendError<Message>);
-        Io(::std::io::Error);
-        Message(cord_message::errors::Error);
-        Terminate(::tokio::sync::oneshot::error::RecvError);
+        Io(IoError);
+        Message(MessageError);
+        Terminate(OneshotRecvError);
     }
 }

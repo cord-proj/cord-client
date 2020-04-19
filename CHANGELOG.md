@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## v0.2.1
+
+-   Fix missing dependency in Docker image
+
 ## v0.2.0
 
 -   Bump dependencies to latest versions
