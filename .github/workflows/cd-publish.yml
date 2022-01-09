@@ -13,7 +13,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
         with:
-          ref: master
+          ref: main
 
       - name: Publish Docker image
         uses: elgohr/Publish-Docker-Github-Action@master
@@ -30,7 +30,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
         with:
-          ref: master
+          ref: main
 
       - name: Login to Crates.io
         uses: actions-rs/cargo@v1
