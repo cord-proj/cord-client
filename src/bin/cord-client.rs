@@ -13,7 +13,6 @@ fn parse_ip(input: &str) -> ::std::result::Result<IpAddr, AddrParseError> {
 
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
-#[clap(global_setting(AppSettings::SubcommandRequiredElseHelp))]
 #[clap(global_setting(AppSettings::UseLongFormatForHelpSubcommand))]
 struct Args {
     /// The IP address to connect to - defaults to 127.0.0.1
