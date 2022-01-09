@@ -1,84 +1,54 @@
-use clap::{
-    crate_authors, crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand,
-};
+use clap::{AppSettings, Parser, Subcommand};
 use cord_client::{errors::*, Client};
 use env_logger;
-use futures::{future, future::join_all, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{future, future::join_all, StreamExt};
 use log::error;
+use std::net::{AddrParseError, IpAddr, Ipv4Addr};
 use tokio::io::{self, AsyncBufReadExt};
+
+// Parse string inputs into IP addresses
+fn parse_ip(input: &str) -> ::std::result::Result<IpAddr, AddrParseError> {
+    input.parse()
+}
+
+#[derive(Parser, Debug)]
+#[clap(about, version, author)]
+#[clap(global_setting(AppSettings::SubcommandRequiredElseHelp))]
+#[clap(global_setting(AppSettings::UseLongFormatForHelpSubcommand))]
+struct Args {
+    /// The IP address to connect to - defaults to 127.0.0.1
+    #[clap(short, long, default_value_t = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), parse(try_from_str = parse_ip))]
+    address: IpAddr,
+
+    /// The port number to connect to - defaults to 7101
+    #[clap(short, long, default_value_t = 7101, parse(try_from_str))]
+    port: u16,
+
+    #[clap(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Publish events to a Cord broker
+    Pub { provides: Vec<String> },
+
+    /// Subscribe to events from a Cord broker
+    Sub { subscribes: Vec<String> },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let matches = App::new(crate_name!())
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
-        .setting(AppSettings::SubcommandRequiredElseHelp)
-        .arg(
-            Arg::with_name("address")
-                .short("a")
-                .long("address")
-                .value_name("SERVER")
-                .help("The IP address to connect to (defaults to 127.0.0.1)")
-                .takes_value(true)
-                .default_value("127.0.0.1"),
-        )
-        .arg(
-            Arg::with_name("port")
-                .short("P")
-                .long("port")
-                .value_name("PORT")
-                .help("The port number to connect to (defaults to 7101)")
-                .takes_value(true)
-                .default_value("7101"),
-        )
-        .subcommand(
-            SubCommand::with_name("pub")
-                .about("Publish events to a Cord broker")
-                .arg(
-                    Arg::with_name("provide")
-                        .help("A namespace pattern that you will provide events for")
-                        .multiple(true)
-                        .required(true),
-                ),
-        )
-        .subcommand(
-            SubCommand::with_name("sub")
-                .about("Subscribe to events from a Cord broker")
-                .arg(
-                    Arg::with_name("subscribe")
-                        .help("A namespace to subscribe to")
-                        .multiple(true)
-                        .required(true),
-                ),
-        )
-        .get_matches();
-
-    // Create socket address
-    // `value_of().unwrap()` is safe as a default value will always be available
-    let port = matches.value_of("port").unwrap().trim();
-    // `value_of().unwrap()` is safe as a default value will always be available
-    let addr = matches.value_of("address").unwrap().trim();
-    let sock_addr = format!("{}:{}", addr, port)
-        .parse()
-        .expect("Invalid broker address");
+    let args = Args::parse();
 
     // Connect to the broker
-    let client = Client::connect(sock_addr).await?;
+    let client = Client::connect((args.address, args.port)).await?;
 
-    if let Some(matches) = matches.subcommand_matches("pub") {
-        let provides: Vec<&str> = matches.values_of("provide").unwrap().collect();
-
-        publish(client, provides.into_iter().map(|s| s.to_owned()).collect()).await?;
-    } else if let Some(matches) = matches.subcommand_matches("sub") {
-        let subscribes: Vec<&str> = matches.values_of("subscribe").unwrap().collect();
-        subscribe(
-            client,
-            subscribes.into_iter().map(|s| s.to_owned()).collect(),
-        )
-        .await?;
+    match args.command {
+        Commands::Pub { provides } => publish(client, provides).await?,
+        Commands::Sub { subscribes } => subscribe(client, subscribes).await?,
     }
 
     Ok(())
@@ -96,23 +66,18 @@ async fn publish(mut conn: Client, provides: Vec<String>) -> Result<()> {
     println!();
 
     // Send events
-    io::BufReader::new(io::stdin())
-        .lines()
-        .map_err(|e| ErrorKind::Msg(e.to_string()).into())
-        .try_fold(conn, |mut conn, event| async move {
-            let parts: Vec<&str> = event.split('=').collect();
+    while let Some(event) = io::BufReader::new(io::stdin()).lines().next_line().await? {
+        let parts: Vec<&str> = event.split('=').collect();
 
-            // Check that the input has a namespace and a value
-            if parts.len() == 2 {
-                conn.event(parts[0].into(), parts[1]).await?;
-            } else {
-                error!("Events must be in format NAMESPACE=VALUE");
-            }
+        // Check that the input has a namespace and a value
+        if parts.len() == 2 {
+            conn.event(parts[0].into(), parts[1]).await?;
+        } else {
+            error!("Events must be in format NAMESPACE=VALUE");
+        }
+    }
 
-            Ok(conn)
-        })
-        .map_ok(|_| ())
-        .await
+    Ok(())
 }
 
 async fn subscribe(mut conn: Client, subscribes: Vec<String>) -> Result<()> {

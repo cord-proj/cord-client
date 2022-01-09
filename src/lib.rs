@@ -13,7 +13,7 @@
 //!# use cord_client::errors::Error;
 //!
 //!# async fn test() -> Result<(), Error> {
-//! let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
+//! let mut conn = Client::connect(("127.0.0.1", 7101)).await?;
 //!
 //! // Tell the broker we're going to provide the namespace /users
 //! conn.provide("/users".into()).await?;
@@ -45,15 +45,18 @@ use futures::{
     stream::SplitSink,
     Sink, SinkExt, Stream, StreamExt, TryStreamExt,
 };
-use futures_locks_pre::Mutex;
+use futures_locks::Mutex;
 use retain_mut::RetainMut;
-use tokio::{net::TcpStream, sync::mpsc, sync::oneshot};
+use tokio::{
+    net::{TcpStream, ToSocketAddrs},
+    sync::mpsc,
+    sync::oneshot,
+};
 use tokio_util::codec::Framed;
 
 use std::{
     collections::HashMap,
     convert::Into,
-    net::SocketAddr,
     ops::Drop,
     pin::Pin,
     result,
@@ -90,7 +93,7 @@ pub struct ClientConn<S> {
 ///# use futures::{future, StreamExt, TryFutureExt};
 ///
 ///# async fn test() -> Result<()> {
-/// let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
+/// let mut conn = Client::connect(("127.0.0.1", 7101)).await?;
 /// conn.subscribe("/users/".into())
 ///     .and_then(|sub| async {
 ///         sub.for_each(|(namespace, data)| {
@@ -119,12 +122,15 @@ where
     S: Sink<Message, Error = MessageError> + Unpin,
 {
     /// Connect to a broker
-    pub async fn connect(addr: SocketAddr) -> Result<Client> {
+    pub async fn connect<A>(addr: A) -> Result<Client>
+    where
+        A: ToSocketAddrs,
+    {
         // This channel is used to shutdown the stream listener when the Client is dropped
         let (det_tx, det_rx) = oneshot::channel();
 
         // Connect to the broker
-        let sock = TcpStream::connect(&addr).await?;
+        let sock = TcpStream::connect(addr).await?;
 
         // Wrap socket in message codec
         let framed = Framed::new(sock, Codec::default());
@@ -180,7 +186,7 @@ where
     ///# use futures::{future, StreamExt, TryFutureExt};
     ///
     ///# async fn test() -> Result<()> {
-    /// let mut conn = Client::connect("127.0.0.1:7101".parse().unwrap()).await?;
+    /// let mut conn = Client::connect(("127.0.0.1", 7101)).await?;
     /// conn.subscribe("/users/".into())
     ///     .and_then(|sub| async {
     ///         sub.for_each(|(namespace, data)| {
@@ -206,9 +212,11 @@ where
                     .entry(namespace_c)
                     .or_insert_with(Vec::new)
                     .push(tx);
-                future::ready(())
+                let ok: result::Result<_, ()> = Ok(());
+                future::ready(ok)
             })
-            .await;
+            .await
+            .unwrap();
         Ok(Subscriber {
             receiver: rx,
             _inner: self.inner.clone(),
@@ -276,7 +284,7 @@ impl Stream for Subscriber {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         unsafe { Pin::map_unchecked_mut(self, |x| &mut x.receiver) }
-            .poll_next(cx)
+            .poll_recv(cx)
             .map(|opt_msg| match opt_msg {
                 Some(Message::Event(pattern, data)) => Some((pattern, data)),
                 None => None,
@@ -456,7 +464,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_route() {
-        let (tx, rx) = mpsc::channel(10);
+        let (tx, mut rx) = mpsc::channel(10);
         let receivers = Mutex::new(HashMap::new());
 
         receivers
@@ -472,7 +480,7 @@ mod tests {
         route(&receivers, event_msg).await;
 
         // Check that the subscriber has received our message
-        assert_eq!(rx.into_future().await.0.unwrap(), event_msg_c);
+        assert_eq!(rx.recv().await.unwrap(), event_msg_c);
 
         let guard = receivers.lock().await;
         assert!((*guard).contains_key(&"/a/b".into()));
