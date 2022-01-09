@@ -1,6 +1,5 @@
 use clap::{AppSettings, Parser, Subcommand};
 use cord_client::{errors::*, Client};
-use env_logger;
 use futures::{future, future::join_all, StreamExt};
 use log::error;
 use std::net::{AddrParseError, IpAddr, Ipv4Addr};
