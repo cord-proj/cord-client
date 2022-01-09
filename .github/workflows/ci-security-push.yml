@@ -3,13 +3,13 @@ name: CI Security Audit on Push
 on:
   push:
     paths:
-      - 'Cargo.toml'
+      - "Cargo.toml"
     branches:
-      - master
+      - main
 
   pull_request:
     branches:
-      - master
+      - main
 
 jobs:
   audit:

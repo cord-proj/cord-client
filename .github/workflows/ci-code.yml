@@ -3,11 +3,11 @@ name: CI Code Testing and Linting
 on:
   push:
     branches:
-      - master
+      - main
 
   pull_request:
     branches:
-      - master
+      - main
 
 jobs:
   check:

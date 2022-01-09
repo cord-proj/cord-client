@@ -1,7 +1,7 @@
 [package]
 name = "cord-client"
-version = "0.2.1"
-edition = "2018"
+version = "0.3.0"
+edition = "2021"
 authors = ["Cord Contributors"]
 license = "MPL-2.0"
 description = """
@@ -16,14 +16,14 @@ categories = ["network-programming", "data-structures"]
 include = ["src/**/*"]
 
 [dependencies]
-clap = "2.33"
-cord-message = "0.2"
-env_logger = "0.7"
+clap = { version = "3.0", features = [ "derive" ] }
+cord-message = "0.3"
+env_logger = "0.9"
 error-chain = "0.12"
-futures = "0.3"
-futures-locks-pre = "0.5.1-pre"
+futures = { version = "0.3" }
+futures-locks = "0.7"
 log = "0.4"
 retain_mut = "0.1"
 termcolor = "1.1"
-tokio = { version = "0.2", features = [ "io-std", "io-util", "macros", "rt-threaded", "sync", "tcp" ] }
-tokio-util = { version = "0.3", features = [ "codec" ] }
+tokio = { version = "1.15", features = [ "io-std", "io-util", "macros", "net", "rt-multi-thread", "sync" ] }
+tokio-util = { version = "0.6", features = [ "codec" ] }

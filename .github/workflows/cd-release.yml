@@ -3,7 +3,7 @@ name: CD Release
 on:
   push:
     branches:
-      - master
+      - main
 
 jobs:
   release:
@@ -24,13 +24,19 @@ jobs:
           body="${body//$'\n'/'%0A'}"
           echo ::set-output name=body::$body
 
+      - name: Tag branch
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: v${{ steps.version.outputs.value }}
+          message: v${{ steps.version.outputs.value }}
+
       - name: Create release
-        uses: actions/create-release@master
+        uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
         with:
           tag_name: v${{ steps.version.outputs.value }}
-          release_name: Release v${{ steps.version.outputs.value }}
+          name: Release v${{ steps.version.outputs.value }}
           body: ${{ steps.changelog.outputs.body }}
           draft: false
           prerelease: false
