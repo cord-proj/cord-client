@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## v0.3.1
+
+- Remove `retain_mut` dependency, which is now part of `std`
+- Bump all dependency versions
+
 ## v0.3.0
 
 - Bump Rust edition
