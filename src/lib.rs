@@ -46,7 +46,6 @@ use futures::{
     Sink, SinkExt, Stream, StreamExt, TryStreamExt,
 };
 use futures_locks::Mutex;
-use retain_mut::RetainMut;
 use tokio::{
     net::{TcpStream, ToSocketAddrs},
     sync::mpsc,
