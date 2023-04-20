@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## v0.3.2
+
+- Bump insecure Tokio dependency minor version
+- Bump all dependency patch versions
+
 ## v0.3.1
 
 - Remove `retain_mut` dependency, which is now part of `std`
