@@ -1,3 +1,8 @@
+# DEPRECATED
+
+This project is deprecated in favour of the
+[Selium project](https://github.com/seliumlabs/selium), which is actively maintained.
+
 # Cord Client
 
 ![CI Code Testing and Linting](https://github.com/cord-proj/cord-client/workflows/CI%20Code%20Testing%20and%20Linting/badge.svg)
